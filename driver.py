@@ -7,8 +7,8 @@ from mpl_toolkits.mplot3d import Axes3D
 import re
 
 sys.path.insert(0, './modules')
-from brain_mesh_module import TimeIt
-from brain_mesh_module import BrainSection
+from timing_module import TimeIt
+from brain_slice_module import BrainSection
 from image_manipulation_module import ImageManipulation
 
 obj = ImageManipulation()

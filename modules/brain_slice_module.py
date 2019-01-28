@@ -4,21 +4,7 @@ import numpy as np
 import cv2
 import os
 import matplotlib.pyplot as plt
-import time as t_lib
 import re
-
-class TimeIt():
-    def __init__(self, name=None):
-        self.name = name
-        self.t0   = None
-    def __enter__(self):
-        self.t0 = t_lib.time()
-    def __exit__(self, type_, value, traceback):
-        if self.name:
-            print('Timer for {:s}'.format(self.name))
-        t = t_lib.time() - self.t0
-        print('Elapsed time: {:0.3f} seconds'.format(t))
-
 #==================================================================
 
 class BrainSection():
@@ -34,7 +20,7 @@ class BrainSection():
 
         self.dir_path= dir_path
         self.slice_n = slice_n
-        self.array   = array.copy()
+        self.array   = array
         self.affine_transformation = transform
 
         self.bw    = None
@@ -56,7 +42,7 @@ class BrainSection():
         #==================================
         self.initialize_map()
         #self.print_mapping()
-        self.convert_array_to_gray()
+        #self.convert_array_to_gray()
 
 
 #==================================================================
@@ -136,7 +122,8 @@ class BrainSection():
 #==================================================================
     def store_boundary_pixels(self):
 
-        fname = os.path.join(self.dir_path, 'boundary_pixel_data.txt')
+        fname = os.path.join(self.dir_path,\
+                'boundary_pixel_data.txt')
         np.savetxt(fname, self.boundary_pixels, fmt = '%d')
 
 #==================================================================
@@ -156,7 +143,8 @@ class BrainSection():
         n_contours = len(contours)
 
         if 1 < n_contours:
-            print('We have {:d} contours to choose from'.format(n_contours))
+            print('We have {:d} contours to choose from'.\
+                    format(n_contours))
             for k,c in enumerate(contours):
                 current_contour_size = c.size
                 if current_max_size < current_contour_size:
@@ -167,7 +155,7 @@ class BrainSection():
 
 
         '''
-        Without dtype conversion data becomes corrupted
+        Without dtype conversion data becomes corrupted.
         '''
         self.boundary = self.boundary_pixels.astype(np.float64)
 
@@ -258,6 +246,7 @@ class BrainSection():
 #==================================================================
     def load_splines(self):
 
+        print('Loading splines...')
         self.splines = []
         splines      = []
 
@@ -359,21 +348,24 @@ class BrainSection():
         plt.close('all')
 
 #==================================================================
-    def plot_splines(self):
+    def test_spline_slice(self):
         fig = plt.figure()
         ax  = fig.add_subplot(111)
 
         x_size = 25
         y_size = 20
+        indices = np.argsort(self.splines[0][0])
+        x_min  = self.splines[0][0][indices[0]]
+        x_max  = self.splines[0][0][indices[-1]]
 
         x = np.linspace(\
-                self.top_boundary[0,0],\
-                self.top_boundary[0,-1],\
+                x_min,\
+                x_max,\
                 x_size)
         y = np.linspace(0,1,y_size)
 
-        y_top = interpolate.splev(x, self.top_spline)
-        y_bottom = interpolate.splev(x, self.bottom_spline)
+        y_top = interpolate.splev(x, self.splines[1])
+        y_bottom = interpolate.splev(x, self.splines[0])
 
         X,Y = np.meshgrid(x,y)
 

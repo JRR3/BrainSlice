@@ -8,8 +8,8 @@ import re
 import cv2
 
 #sys.path.insert(0, '.')
-from brain_mesh_module import TimeIt
-from brain_mesh_module import BrainSection
+from timing_module import TimeIt
+from brain_slice_module import BrainSection
 
 #==================================================================
 
@@ -22,6 +22,17 @@ class ImageManipulation():
         self.nib_is_loaded = False
 
         self.affine_transformation = None
+
+        '''
+        XY coordinates of the experimental center with
+        respect to the model coordinate system.
+        '''
+        self.experimental_center_mm_in_model = np.array([2,0]) 
+        
+        '''
+        From top of the brain (bregma) to site of injection
+        '''
+        self.depth_of_injection_in_mm = 3.0
 
         self.safe_range = (200, 1000)
 
@@ -56,6 +67,25 @@ class ImageManipulation():
 #==================================================================M
 
         self.load_nib_affine_transformation()
+
+#==================================================================
+    def get_experimental_center_in_model_pixel_xy(self, z_mm):
+
+        c_mm = np.array([\
+                self.experimental_center_mm_in_model[0],\
+                z_mm,\
+                self.experimental_center_mm_in_model[1],\
+                1,\
+                ])
+        voxel = np.linalg.solve(\
+                self.affine_transformation,\
+                c_mm)[:3]
+
+        pixel = voxel[[0,2]].astype(int)
+
+        return pixel
+
+
 
 #==================================================================
     def up_one_directory(self, dir_path=os.getcwd() ):
@@ -313,8 +343,9 @@ class ImageManipulation():
             print('Working with experimental slice {:d}'.\
                     format(experimental_z_n))
 
+
             '''
-            Z-axis parameters
+            Load experimental image based on z-axis parameters
             '''
             model_z_n =\
                     self.map_experimental_z_n_to_model_z_n(\
@@ -392,38 +423,137 @@ class ImageManipulation():
             boundary = np.loadtxt(boundary_fname,\
                     dtype = int)
 
+            '''
+            Get bounding box of model data
+            '''
             x,y,w,h = cv2.boundingRect(boundary.T)
-            print('Model WxH: {:d}x{:d}'.format(w,h))
-
-            x_indices = np.argsort(boundary[0])
-            y_indices = np.argsort(boundary[1])
-            x_min_pixel = boundary[0,x_indices[0]]
-            x_max_pixel = boundary[0,x_indices[-1]]
-            y_min_pixel = boundary[1,y_indices[0]]
-            y_max_pixel = boundary[1,y_indices[-1]]
-            print('min. corner ({:d},{:d}):'.\
-                    format(x_min_pixel, y_min_pixel))
-            print('max. corner ({:d},{:d}):'.\
-                    format(x_max_pixel, y_max_pixel))
- 
-            delta_x_pixel = x_max_pixel - x_min_pixel + 1            
-            delta_y_pixel = y_max_pixel - y_min_pixel + 1            
-
-            model_img_shape = (delta_y_pixel, delta_x_pixel)
-
+            model_img_shape = (h, w)
             print('Model pixel dimensions')
             print('H x W: {:d} x {:d}'.\
                     format(*model_img_shape))
 
+            x_indices = np.argsort(boundary[0])
+            y_indices = np.argsort(boundary[1])
+
+            pixel_at_x_min = boundary[:,x_indices[0]]
+            pixel_at_x_max = boundary[:,x_indices[-1]]
+            pixel_at_y_min = boundary[:,y_indices[0]]
+            pixel_at_y_max = boundary[:,y_indices[-1]]
+
+            print('Pixel at x min')
+            print(pixel_at_x_min)
+            print('Pixel at x max')
+            print(pixel_at_x_max)
+            print('Pixel at y min')
+            print(pixel_at_y_min)
+            print('Pixel at y max')
+            print(pixel_at_y_max)
+
+            '''
+            Horizontal length
+            '''
+            left_pixel = np.array([\
+                    pixel_at_x_min[0],\
+                    model_z_n,\
+                    pixel_at_x_min[1],\
+                    1])
+            left_mm = \
+                    self.affine_transformation.dot(left_pixel)
+            print('Model left mm')
+            print(left_mm)
+
+            right_pixel = np.array([\
+                    pixel_at_x_max[0],\
+                    model_z_n,\
+                    pixel_at_x_max[1],\
+                    1])
+            right_mm = \
+                    self.affine_transformation.dot(right_pixel)
+            print('Model right mm')
+            print(right_mm)
+
+            model_width_mm = (right_mm - left_mm)[0]
+            print('Model horizontal length mm')
+            print(model_width_mm)
+
+            '''
+            Vertical length
+            '''
+            bottom_pixel = np.array([\
+                    pixel_at_y_min[0],\
+                    model_z_n,\
+                    pixel_at_y_min[1],\
+                    1])
+            bottom_mm = \
+                    self.affine_transformation.dot(bottom_pixel)
+            print('Model bottom mm')
+            print(bottom_mm)
+
+            top_pixel = np.array([\
+                    pixel_at_y_max[0],\
+                    model_z_n,\
+                    pixel_at_y_max[1],\
+                    1])
+            top_mm = \
+                    self.affine_transformation.dot(top_pixel)
+            print('Model top mm')
+            print(top_mm)
+
+            model_height_mm = (top_mm - bottom_mm)[2]
+            print('Model vertical length mm')
+            print(model_height_mm)
+
+            model_height_width_in_mm = (\
+                    model_height_mm,\
+                    model_width_mm)
+
+            '''
+            Model aspect ratio
+            '''
             model_heigh_to_width_ratio =\
                     model_img_shape[0] /\
                     model_img_shape[1] 
-
-            print('Model H:W')
+            print('Model aspect ratio H:W')
             print(model_heigh_to_width_ratio)
 
-            exit()
 
+            '''
+            Plot overlap
+            '''
+            overlap_img =\
+                    cv2.resize(\
+                    experimental_img,\
+                    model_img_shape[::-1])
+
+            y_img = h - (boundary[1]-boundary[1].min() + 1)
+            x_img = boundary[0]-boundary[0].min()
+            overlap_img[y_img, x_img, :] = 255
+
+            '''
+            Experimental theoretical center
+            '''
+            c = self.get_experimental_center_in_model_pixel_xy(\
+                    model_z_mm)
+
+            y_img = h - (c[1] - boundary[1].min() + 1)
+            x_img = c[0] - boundary[0].min()
+            overlap_img[y_img, x_img, :] = 255
+
+            overlap_fname = 'overlap.jpeg'
+                    #experimental_basename + '_scaled.jpeg'
+            overlap_fname = os.path.join(\
+                    dir_path,\
+                    overlap_fname)
+
+            cv2.imwrite(overlap_fname, overlap_img)
+            overlap_img = None
+
+
+
+            '''
+            Compute experimental image width 
+            to match model aspect ratio
+            '''
             new_experimental_width =\
                     experimental_img_shape[0] /\
                     model_heigh_to_width_ratio
@@ -434,41 +564,155 @@ class ImageManipulation():
             print('New experimental width')
             print(new_experimental_width)
 
-            new_experimental_w_h = (new_experimental_width,\
-                    experimental_img_shape[0])
+            experimental_img_shape = (\
+                    experimental_img_shape[0],\
+                    new_experimental_width,\
+                    )
+            '''
+            Store resized image shape 
+            '''
+            height_width_in_pixels_fname =\
+                    'height_width_in_pixels.txt'
+            height_width_in_pixels_fname = os.path.join(\
+                    dir_path,\
+                    height_width_in_pixels_fname)
 
+            np.savetxt(height_width_in_pixels_fname,\
+                    experimental_img_shape,\
+                    fmt='%d');
+
+            '''
+            Store resized image dimensions in mm 
+            '''
+            height_width_in_mm_fname = 'height_width_in_mm.txt'
+                    #experimental_basename + '_scaled.jpeg'
+            height_width_in_mm_fname = os.path.join(\
+                    dir_path,\
+                    height_width_in_mm_fname)
+
+            np.savetxt(height_width_in_mm_fname,\
+                    model_height_width_in_mm,\
+                    fmt='%f');
+
+            '''
+            Resize experimental image to match model aspect ratio
+            '''
             experimental_img =\
                     cv2.resize(\
                     experimental_img,\
-                    model_img_shape[::-1])
-                    #new_experimental_w_h)
+                    experimental_img_shape[::-1])
+            '''
+            Theoretical center 
+            x = Midpoint of image plus 2mm to the right
+            y = 3mm below surface
+            '''
+            experimental_height_widht_mm_to_pixel =\
+                    np.array(experimental_img_shape) / \
+                    np.array(model_height_width_in_mm)
+            x  = experimental_img_shape[1] / 2
+            x += experimental_height_widht_mm_to_pixel[1] * \
+                    self.experimental_center_mm_in_model[0]
+            y  = experimental_height_widht_mm_to_pixel[0] * \
+                    self.depth_of_injection_in_mm
+            x  = np.round(x).astype(int)
+            y  = np.round(y).astype(int)
 
-
-            experimental_img[\
-                    boundary[1]-boundary[1].min(),\
-                    boundary[0]-boundary[0].min(),\
-                    :] = 0
-
-            new_experimental_fname = 'channel.jpeg'
-                    #experimental_basename + '_scaled.jpeg'
-            new_experimental_fname = os.path.join(\
+            scaled_fname = 'scaled.jpeg'
+            scaled_fname = os.path.join(\
                     dir_path,\
-                    new_experimental_fname)
+                    scaled_fname)
 
-            cv2.imwrite(new_experimental_fname,\
+            cv2.imwrite(scaled_fname,\
                     experimental_img[:,:,:])
+
+            '''
+            Store red channel
+            Recall that the output format is BGR
+            '''
+            channel = experimental_img[:,:,2]
+            channel_fname = 'channel.jpeg'
+            channel_fname = os.path.join(\
+                    dir_path,\
+                    channel_fname)
+
+            cv2.imwrite(channel_fname,\
+                    channel)
+
+
+
+            '''
+            Center extraction
+            Row, column pixel location using matrix coordinates
+            '''
+            center_fname = 'center.txt'
+            center_fname = os.path.join(\
+                    dir_path,\
+                    center_fname)
+
+            if not os.path.exists(center_fname):
+                print('File {:s} does not exists'.\
+                        format(center_fname))
+                print('=========================')
+                continue
+            experimental_center_pixel = np.loadtxt(center_fname)
+            experimental_center_pixel =\
+                    np.round(experimental_center_pixel).astype(int)
+            x = experimental_center_pixel[0]
+            y = experimental_center_pixel[1]
+            print('User provided experimental center (Row,Col)')
+            print(experimental_center_pixel)
+
+            experimental_img_with_center =\
+                    experimental_img.copy()
+            cv2.circle(\
+                    experimental_img_with_center,\
+                    (x,y),\
+                    10,\
+                    (255,255,255),\
+                    3,\
+                    )
+
+            scaled_with_center_fname = 'scaled_with_center.jpeg'
+            scaled_with_center_fname = os.path.join(\
+                    dir_path,\
+                    scaled_with_center_fname)
+
+            cv2.imwrite(scaled_with_center_fname,\
+                    experimental_img_with_center[:,:,:])
+            experimental_img_with_center = None
+
+
+            '''
+            Define map from model to experimental
+            '''
+            def model_to_experimental_value(x,y):
+                '''
+                Change to coordinates wrt the experimental center
+                '''
+                xc = x - self.experimental_center_mm_in_model[0]
+                yc = y - self.experimental_center_mm_in_model[1]
+                xc *=  experimental_img_shape[1]/model_width_mm
+                yc *= -experimental_img_shape[0]/model_height_mm
+                xc += experimental_center_pixel[0]
+                yc += experimental_center_pixel[1]
+
+                return (xc, yc)
+
+
+
+            brain_slice = BrainSection(\
+                    local_slice_dir,\
+                    model_z_n,\
+                    None,\
+                    self.affine_transformation,\
+                    )
+
+            brain_slice.load_splines()
+            brain_slice.test_spline_slice()
+
             exit()
 
-            '''
-            Save model pixel data 
-            '''
-            boundary_path =\
-                    os.path.join(local_slice_dir, boundary_fname)
-            np.savetxt(fname)
 
-
-
-            print('--------------------------------------')
 
 
             
