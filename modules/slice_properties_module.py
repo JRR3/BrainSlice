@@ -19,7 +19,7 @@ class SliceProperties():
         self.width_mm = None
         self.channel = None
         self.xy_pixel_center = None
-        self.experimental_center_in_model_mm = None
+        self.xy_experimental_center_in_model_mm = None
 #==================================================================
 
     def map_from_model_xy_to_experimental_matrix(self, x, y):
@@ -32,8 +32,8 @@ class SliceProperties():
 
         xc = x.copy()
         yc = y.copy()
-        xc -= self.experimental_center_in_model_mm[0]
-        yc -= self.experimental_center_in_model_mm[1]
+        xc -= self.xy_experimental_center_in_model_mm[0]
+        yc -= self.xy_experimental_center_in_model_mm[1]
         xc *=  self.width_pixel/self.width_mm
         yc *= -self.height_pixel/self.height_mm
         xc += self.xy_pixel_center[0]

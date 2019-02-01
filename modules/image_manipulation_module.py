@@ -30,12 +30,19 @@ class ImageManipulation():
         XY coordinates of the experimental center with
         respect to the model coordinate system.
         '''
-        self.experimental_center_in_model_mm = np.array([2,0]) 
+        self.xy_experimental_center_in_model_mm =\
+                np.array([2,0]) 
         
         '''
         From top of the brain (bregma) to site of injection
         '''
         self.depth_of_injection_in_mm = 3.0
+
+        '''
+        Location of coronal section at the site of injection
+        using experimental coordinates in mm
+        '''
+        self.site_of_injection_in_experimental_z_mm = 0
 
         self.safe_range = (200, 1000)
 
@@ -69,6 +76,14 @@ class ImageManipulation():
         self.map_model_z_mm_to_experimental_z_mm =\
                 lambda z_mm: -1.5 - z_mm
 
+        '''
+        XYZ coordinates of the experimental center with
+        respect to the model coordinate system.
+        '''
+        self.site_of_injection_in_model_mm = None
+
+        self.slice_n_at_injection_site = None
+
         self.slice_properties          = []
         self.list_of_experimental_z_mm = []
         self.sorted_experimental_z_mm  = None
@@ -76,14 +91,29 @@ class ImageManipulation():
 #==================================================================M
 
         self.load_nib_affine_transformation()
+        self.compute_injection_site_properties()
 
 #==================================================================
-    def get_experimental_center_in_model_pixel_xy(self, z_mm):
+    def compute_injection_site_properties(self):
+
+        b    = self.site_of_injection_in_experimental_z_mm
+        z_mm = self.map_experimental_z_mm_to_model_z_mm(b)
+        z_n  = self.map_model_z_mm_to_z_n(z_mm)
+        self.slice_n_at_injection_site = z_n
+
+        a = self.xy_experimental_center_in_model_mm
+
+        self.site_of_injection_in_model_mm =\
+                np.concatenate((a,[z_mm])) 
+
+
+#==================================================================
+    def map_z_mm_at_experimental_center_to_pixel_xy(self, z_mm):
 
         c_mm = np.array([\
-                self.experimental_center_in_model_mm[0],\
+                self.xy_experimental_center_in_model_mm[0],\
                 z_mm,\
-                self.experimental_center_in_model_mm[1],\
+                self.xy_experimental_center_in_model_mm[1],\
                 1,\
                 ])
         voxel = np.linalg.solve(\
@@ -315,12 +345,26 @@ class ImageManipulation():
 #==================================================================
     def plot_interpolated_slices(self):
 
+        plot_in_3d = True
+        #plot_in_3d = False
+        data_is_in_mm = False
+
         self.slice_interpolation_setup()
-        slices_to_plot = [530]
+        slices_to_plot = [self.slice_n_at_injection_site]
         slices_to_plot = np.linspace(400,765,10).astype(int)
+
+        if data_is_in_mm: 
+            slices_to_plot =\
+                    [self.map_model_z_mm_to_z_n(z_mm)\
+                    for z_mm in slices_to_plot]
+
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        #ax = fig.add_subplot(111)
+        if plot_in_3d:
+            ax = fig.add_subplot(111, projection='3d')
+            min_z = +np.inf
+            max_z = -np.inf
+        else:
+            ax = fig.add_subplot(111)
         colors = [(0,0,128/255), (1,1,0), (1,1,1)]
         c_map_name = 'custom'
         c_map = lsc.from_list(c_map_name, colors, N = 100)
@@ -331,6 +375,9 @@ class ImageManipulation():
 
             slice_z_mm =\
                     self.map_model_z_n_to_mm(slice_idx)
+            slice_z_mm_exp =\
+                    self.map_model_z_mm_to_experimental_z_mm(\
+                    slice_z_mm)
 
             print('Model slice z_mm : {:0.3f}'.format(slice_z_mm))
 
@@ -351,7 +398,10 @@ class ImageManipulation():
 
             brain_slice.load_splines()
             X,Y = brain_slice.generate_mesh()
-            U = np.full(X.shape, c)
+            if plot_in_3d: 
+                U = np.full(X.shape, c)
+                min_z = np.min((min_z,c))
+                max_z = np.max((max_z,c))
             x = X.ravel()
             y = Y.ravel()
 
@@ -364,6 +414,15 @@ class ImageManipulation():
             for k in range(self.n_of_slice_objects-1):
                 z_mm_0 = self.sorted_experimental_z_mm[k]
                 z_mm_1 = self.sorted_experimental_z_mm[k+1]
+                z_mm_0_exp =\
+                        self.\
+                        map_model_z_mm_to_experimental_z_mm(\
+                        z_mm_0)
+                z_mm_1_exp =\
+                        self.\
+                        map_model_z_mm_to_experimental_z_mm(\
+                        z_mm_1)
+
                 c0 = z_mm_0     <= slice_z_mm
                 c1 = slice_z_mm <= z_mm_1
 
@@ -374,8 +433,17 @@ class ImageManipulation():
                             sorted_indices_experimental_z_mm[k+1]
                     delta_z = z_mm_1 - z_mm_0
 
+                    print('Bound in model coordinates:')
                     txt = '{:0.3f} <= {:0.3f} <= {:0.3f}'.\
                             format(z_mm_0, slice_z_mm, z_mm_1)
+                    print(txt)
+                    print('Bound in experimental coordinates:')
+                    txt = '{:0.3f} <= {:0.3f} <= {:0.3f}'.\
+                            format(\
+                            z_mm_1_exp,\
+                            slice_z_mm_exp,\
+                            z_mm_0_exp,\
+                            )
                     print(txt)
                     txt = 'Interpolation indices: ({:d},{:d})'.\
                             format(idx_0, idx_1)
@@ -391,25 +459,61 @@ class ImageManipulation():
             slope = (slice_z_mm - z_mm_0)/delta_z
             v = (v_1 - v_0) * slope + v_0
             Z = v.reshape(X.shape)
-            c_map = color_map.jet(Z/255)
-            ax.plot_surface(\
-                    X,Y,U,\
-                    facecolors = c_map,\
-                    rstride = 1,\
-                    cstride = 1,\
-                    alpha = 0.3,\
-                    linewidth = 0.05,\
-                    )
-            #c = ax.pcolor(X,Y,Z, cmap = c_map, vmin=0, vmax=255)
+            if plot_in_3d:
+                c_map = color_map.jet(Z/255)
+                ax.plot_surface(\
+                        X,Y,U,\
+                        facecolors = c_map,\
+                        rstride = 1,\
+                        cstride = 1,\
+                        alpha = 0.3,\
+                        linewidth = 0.05,\
+                        #linewidth = 0.0,\
+                        )
+            else:
+                c = ax.pcolor(X,Y,Z,\
+                        cmap = c_map, vmin=0, vmax=255)
+                fig.colorbar(c, ax=ax)
+                txt = 'slice_' + str(slice_idx) + '.pdf'
+                fig.savefig(txt, dpi = 300)
 
-        #fig.colorbar(c, ax=ax)
-        main_c_map = color_map.ScalarMappable(cmap = color_map.jet)
-        #fig.colorbar(main_c_map)
 
-        ax.set_xlabel('Sagittal')
-        ax.set_ylabel('Transverse')
-        ax.set_zlabel('Coronal')
-        fig.savefig('test.pdf', dpi = 300)
+        if plot_in_3d:
+            main_c_map =\
+                    color_map.ScalarMappable(\
+                    cmap = color_map.jet)
+            a,b,c = self.site_of_injection_in_model_mm
+            ax.scatter(a,b,c, color='k', marker='o', s = 10)
+            z_bottom = min_z - 0.1
+            z_top    = max_z + 0.1
+            ax.plot([a,a],[b,b],\
+                    [z_bottom,z_top],\
+                    linewidth=2,color='k')
+
+            ax.yaxis.set_ticks([-3,0,3])
+            ax.set_zlim(z_bottom, z_top)
+            ax.set_xlabel('Sagittal')
+            ax.set_ylabel('Transverse')
+            ax.set_zlabel('Coronal')
+
+            fig.savefig('brain_mesh.pdf', dpi = 300)
+
+#==================================================================
+    def plot_sphere(self):
+        n=20
+        theta = np.linspace(0,2*np.pi,n)
+        phi   = np.linspace(0,1*np.pi,n)
+        T,P   = np.meshgrid(theta, phi)
+        rho   = 2
+        a,b,c = self.site_of_injection_in_model_mm
+        X = rho * np.cos(T) * np.sin(P) + a
+        Y = rho * np.sin(T) * np.sin(P) + b
+        Z = rho * np.cos(P)             + c
+        fig = plt.figure()
+        ax  = fig.add_subplot(111, projection='3d')
+        ax.set_aspect('equal')
+        ax.plot_surface(X,Y,Z)
+        fig.savefig('sphere.pdf', dpi = 300)
 
 
 #==================================================================
@@ -421,8 +525,6 @@ class ImageManipulation():
         self.list_of_experimental_z_mm =\
                 np.array(self.list_of_experimental_z_mm)
 
-        print('The original list of experimental z_mm is:')
-        print(self.list_of_experimental_z_mm)
 
         self.sorted_indices_experimental_z_mm =\
                 np.argsort(self.list_of_experimental_z_mm)
@@ -436,8 +538,12 @@ class ImageManipulation():
         print(self.sorted_indices_experimental_z_mm)
 
 
-        print('The available z mm values are:')
+        print('Experimental z_mm in model coordinates:')
         print(self.sorted_experimental_z_mm)
+
+        print('Experimental z_mm in expr. coordinates:')
+        print(self.map_model_z_mm_to_experimental_z_mm(\
+                self.sorted_experimental_z_mm))
 
 #==================================================================
     def add_zero_slices_from_safe_range(self):
@@ -467,8 +573,8 @@ class ImageManipulation():
                 continue
 
             SP = SliceProperties()
-            SP.experimental_center_in_model_mm =\
-                    self.experimental_center_in_model_mm
+            SP.xy_experimental_center_in_model_mm =\
+                    self.xy_experimental_center_in_model_mm
 
             experimental_z_n = int(obj.group('z_n'))
             print('The expr. z_n  = {:d}'.format(experimental_z_n))
@@ -771,7 +877,8 @@ class ImageManipulation():
             '''
             Experimental theoretical center
             '''
-            c = self.get_experimental_center_in_model_pixel_xy(\
+            c = self.\
+                    map_z_mm_at_experimental_center_to_pixel_xy(\
                     model_z_mm)
 
             y_img = h - (c[1] - boundary[1].min() + 1)
@@ -852,7 +959,7 @@ class ImageManipulation():
                     np.array(model_height_width_in_mm)
             x  = experimental_img_shape[1] / 2
             x += experimental_height_widht_mm_to_pixel[1] * \
-                    self.experimental_center_in_model_mm[0]
+                    self.xy_experimental_center_in_model_mm[0]
             y  = experimental_height_widht_mm_to_pixel[0] * \
                     self.depth_of_injection_in_mm
             x  = np.round(x).astype(int)
@@ -927,63 +1034,6 @@ class ImageManipulation():
                     experimental_img_with_center[:,:,:])
             experimental_img_with_center = None
 
-            return
-
-
-            '''
-            Define map from model to experimental
-            '''
-            def model_to_experimental_value(x,y):
-                '''
-                Change to coordinates wrt the experimental center
-                '''
-                xc = x.copy().ravel()
-                yc = y.copy().ravel()
-                xc -= self.experimental_center_in_model_mm[0]
-                yc -= self.experimental_center_in_model_mm[1]
-                xc *=  experimental_img_shape[1]/model_width_mm
-                yc *= -experimental_img_shape[0]/model_height_mm
-                xc += experimental_center_pixel[0]
-                yc += experimental_center_pixel[1]
-                xc = xc.astype(int)
-                yc = yc.astype(int)
-
-                '''
-                Bring inside the domain
-                '''
-                xc[xc < 0] = 0
-                yc[yc < 0] = 0
-                xc[xc > experimental_img_shape[1]-1] =\
-                        experimental_img_shape[1]-1
-                yc[yc > experimental_img_shape[0]-1] =\
-                        experimental_img_shape[0]-1
-                indices = yc * experimental_img_shape[1] + xc
-
-                #mask = np.logical_and.reduce((\
-                        #-1 < xc,\
-                        #-1 < yc,\
-                        #xc < experimental_img_shape[1],\
-                        #yc < experimental_img_shape[0],\
-                        #))
-
-                values = channel.flat[indices]
-
-                z = values.reshape(x.shape)
-
-                return z
-
-
-
-            brain_slice = BrainSection(\
-                    local_slice_dir,\
-                    model_z_n,\
-                    None,\
-                    self.affine_transformation,\
-                    )
-
-            brain_slice.load_splines()
-            brain_slice.test_spline_slice(\
-                    model_to_experimental_value)
 
 
 

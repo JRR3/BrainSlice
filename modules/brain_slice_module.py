@@ -358,6 +358,9 @@ class BrainSection():
         x_size = 35
         y_size = 30
 
+        x_size = 65
+        y_size = 60
+
         x_min  = self.splines[0][0][0]
         x_max  = self.splines[0][0][-1]
 
@@ -366,11 +369,13 @@ class BrainSection():
                 x_max,\
                 x_size)
         y = np.linspace(0,1,y_size)
+        x_positive_indices = 0 < x
 
         y_top = interpolate.splev(x, self.splines[1])
         y_bottom = interpolate.splev(x, self.splines[0])
+        y_bottom = interpolate.splev(x, self.splines[0])
+        y_bottom *= (1 - x_positive_indices)
 
-        print('The mesh was generated')
 
         X,Y =  np.meshgrid(x,y)
 
@@ -379,6 +384,8 @@ class BrainSection():
             yb = y_bottom[k]
             y = np.linspace(yb,yt,y_size)
             Y[:,k] = y
+
+        print('The mesh was generated')
 
         return (X,Y)
 
