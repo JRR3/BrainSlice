@@ -13,6 +13,7 @@ class SliceProperties():
         self.experimental_z_n = None
         self.model_z_n = None
         self.model_z_mm = None
+        self.experimental_z_mm = None
         self.height_pixel= None
         self.width_pixel = None
         self.height_mm= None

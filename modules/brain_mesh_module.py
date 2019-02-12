@@ -1,10 +1,24 @@
 from scipy import misc
-from scipy.interpolate import CubicSpline as cspline
+from scipy import interpolate
 import numpy as np
 import cv2
 import os
 import matplotlib.pyplot as plt
+import time as t_lib
 import re
+
+class TimeIt():
+    def __init__(self, name=None):
+        self.name = name
+        self.t0   = None
+    def __enter__(self):
+        self.t0 = t_lib.time()
+    def __exit__(self, type_, value, traceback):
+        if self.name:
+            print('Timer for {:s}'.format(self.name))
+        t = t_lib.time() - self.t0
+        print('Elapsed time: {:0.3f} seconds'.format(t))
+
 #==================================================================
 
 class BrainSection():
@@ -20,7 +34,7 @@ class BrainSection():
 
         self.dir_path= dir_path
         self.slice_n = slice_n
-        self.array   = array
+        self.array   = array.copy()
         self.affine_transformation = transform
 
         self.bw    = None
@@ -40,9 +54,9 @@ class BrainSection():
         self.shift = None
 
         #==================================
-        #self.initialize_map()
+        self.initialize_map()
         #self.print_mapping()
-        #self.convert_array_to_gray()
+        self.convert_array_to_gray()
 
 
 #==================================================================
@@ -66,8 +80,7 @@ class BrainSection():
         out = self.affine_transformation.dot(x)
 
         '''
-        Component 1 is equivalent to the z coordinate 
-        of the current model
+        Component 1 is equivalent to the z coordinate of the current model
         '''
         self.slice_z_position = out[1]
 
@@ -123,8 +136,7 @@ class BrainSection():
 #==================================================================
     def store_boundary_pixels(self):
 
-        fname = os.path.join(self.dir_path,\
-                'boundary_pixel_data.txt')
+        fname = os.path.join(self.dir_path, 'boundary_pixel_data.txt')
         np.savetxt(fname, self.boundary_pixels, fmt = '%d')
 
 #==================================================================
@@ -144,8 +156,7 @@ class BrainSection():
         n_contours = len(contours)
 
         if 1 < n_contours:
-            print('We have {:d} contours to choose from'.\
-                    format(n_contours))
+            print('We have {:d} contours to choose from'.format(n_contours))
             for k,c in enumerate(contours):
                 current_contour_size = c.size
                 if current_max_size < current_contour_size:
@@ -156,7 +167,7 @@ class BrainSection():
 
 
         '''
-        Without dtype conversion data becomes corrupted.
+        Without dtype conversion data becomes corrupted
         '''
         self.boundary = self.boundary_pixels.astype(np.float64)
 
@@ -279,8 +290,6 @@ class BrainSection():
         for s in splines: 
             self.splines.append(tuple(s))
 
-        print('The splines were loaded')
-
 ##==================================================================
     def save_splines(self):
 
@@ -290,9 +299,7 @@ class BrainSection():
 
             for c_index, c in enumerate(s):
                 file_base =\
-                        spline_base   +\
-                        '_component_' +\
-                        str(c_index)  + '.txt'
+                        spline_base + '_component_' + str(c_index) + '.txt'
 
                 fname = os.path.join(self.dir_path, file_base)
 
@@ -307,10 +314,9 @@ class BrainSection():
                 np.savetxt(fname, obj)
 
 #==================================================================
-    def create_boundary_and_splines(self):
+    def create_splines(self):
 
         self.extract_boundary()
-        obj.store_boundary_pixels()
         self.map_boundary_to_real()
         self.separate_top_and_bottom_boundary()
         self.smooth_boundary()
@@ -353,65 +359,21 @@ class BrainSection():
         plt.close('all')
 
 #==================================================================
-    def generate_mesh(self):
-
-        x_size = 35
-        y_size = 30
-
-        x_size = 65
-        y_size = 60
-
-        x_min  = self.splines[0][0][0]
-        x_max  = self.splines[0][0][-1]
-
-        x = np.linspace(\
-                x_min,\
-                x_max,\
-                x_size)
-        y = np.linspace(0,1,y_size)
-        x_positive_indices = 0 < x
-
-        y_top = interpolate.splev(x, self.splines[1])
-        y_bottom = interpolate.splev(x, self.splines[0])
-        y_bottom = interpolate.splev(x, self.splines[0])
-        y_bottom *= (1 - x_positive_indices)
-
-
-        X,Y =  np.meshgrid(x,y)
-
-        for k in range(y_top.size):
-            yt = y_top[k]
-            yb = y_bottom[k]
-            y = np.linspace(yb,yt,y_size)
-            Y[:,k] = y
-
-        print('The mesh was generated')
-
-        return (X,Y)
-
-
-#==================================================================
-    def test_spline_slice(self, fun=None):
+    def plot_splines(self):
         fig = plt.figure()
         ax  = fig.add_subplot(111)
 
         x_size = 25
         y_size = 20
 
-        x_size = 35
-        y_size = 30
-        #indices = np.argsort(self.splines[0][0])
-        x_min  = self.splines[0][0][0]
-        x_max  = self.splines[0][0][-1]
-
         x = np.linspace(\
-                x_min,\
-                x_max,\
+                self.top_boundary[0,0],\
+                self.top_boundary[0,-1],\
                 x_size)
         y = np.linspace(0,1,y_size)
 
-        y_top = interpolate.splev(x, self.splines[1])
-        y_bottom = interpolate.splev(x, self.splines[0])
+        y_top = interpolate.splev(x, self.top_spline)
+        y_bottom = interpolate.splev(x, self.bottom_spline)
 
         X,Y = np.meshgrid(x,y)
 
@@ -425,9 +387,7 @@ class BrainSection():
                 'b-', linewidth=2)
         ax.plot(x, y_bottom,\
                 'r-', linewidth=2)
-
-        #Z = X**2 + Y**2
-        Z = fun(X,Y)
+        Z = X**2 + Y**2
 
         ax.pcolor(X,Y,Z)
 

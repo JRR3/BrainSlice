@@ -1,6 +1,8 @@
 import sys
 import nibabel as nib
 import numpy as np
+from scipy.interpolate import CubicSpline as cspline
+from scipy.stats import mode as get_mode
 import os
 import matplotlib.pyplot as plt
 from matplotlib import cm as color_map
@@ -8,6 +10,7 @@ from matplotlib.colors import LinearSegmentedColormap as lsc
 from mpl_toolkits.mplot3d import Axes3D
 import re
 import cv2
+import matplotlib.ticker as mtick
 
 #sys.path.insert(0, '.')
 from timing_module import TimeIt
@@ -51,6 +54,9 @@ class ImageManipulation():
         self.experimental_data_dir = os.path.join(\
                 self.main_dir, 'experimental_data')
 
+        self.postprocessing_dir = os.path.join(\
+                self.main_dir, 'postprocessing')
+
         self.brain_mesh_local_dir = 'brain_model'
 
         self.brain_mesh_dir = os.path.join(\
@@ -86,6 +92,7 @@ class ImageManipulation():
 
         self.slice_properties          = []
         self.list_of_experimental_z_mm = []
+        self.sorted_slice_properties   = []
         self.sorted_experimental_z_mm  = None
         self.n_of_slice_objects        = 0
 #==================================================================M
@@ -343,6 +350,69 @@ class ImageManipulation():
         return cropped_img
 
 #==================================================================
+    def interpolate_intensity(self, x, y, z):
+
+        sorted_z_indices = np.argsort(z)
+
+        sorted_z = z[sorted_z_indices]
+        sorted_x = x[sorted_z_indices]
+        sorted_y = y[sorted_z_indices]
+        u = np.zeros(z.size)
+
+        n_elements  = z.size
+        left_bound  = 0
+        right_bound = 0
+
+        for slice_idx in range(1,self.n_of_slice_objects):
+
+            slice_z_mm =\
+                    self.sorted_experimental_z_mm[slice_idx]
+            print('Slice z mm: {:0.3f}'.format(slice_z_mm))
+
+            interval_is_empty = True
+
+            while (right_bound < n_elements) and\
+                    (sorted_z[right_bound] <= slice_z_mm):
+                right_bound      += 1
+                interval_is_empty = False
+
+            if interval_is_empty:
+                continue 
+
+            x_interval = sorted_x[left_bound:right_bound]
+            y_interval = sorted_y[left_bound:right_bound]
+            z_interval = sorted_z[left_bound:right_bound]
+
+            obj_0 = self.sorted_slice_properties[slice_idx-1]
+            obj_1 = self.sorted_slice_properties[slice_idx]
+
+            z_0   = obj_0.experimental_z_mm
+            z_1   = obj_1.experimental_z_mm
+            delta_z = z_1 - z_0
+
+            v_0 = obj_0.\
+                    map_from_model_xy_to_experimental_matrix\
+                    (x_interval,y_interval)
+
+            v_1 = obj_1.\
+                    map_from_model_xy_to_experimental_matrix\
+                    (x_interval,y_interval)
+
+
+            slope = (v_1 - v_0)/delta_z
+            v =  (z_interval - z_0)* slope + v_0
+
+            u[sorted_z_indices[left_bound:right_bound]] = v
+
+            left_bound = right_bound
+
+            if right_bound == n_elements:
+                break
+
+        return u
+
+
+#==================================================================
     def plot_interpolated_slices(self):
 
         plot_in_3d = True
@@ -379,11 +449,9 @@ class ImageManipulation():
                     self.map_model_z_mm_to_experimental_z_mm(\
                     slice_z_mm)
 
-            print('Model slice z_mm : {:0.3f}'.format(slice_z_mm))
-
-            c = self.map_model_z_mm_to_experimental_z_mm(\
-                    slice_z_mm)
-            print('Expr. slice z_mm : {:0.3f}'.format(c))
+            print('Slice z_mm (model): {:0.3f}'.format(slice_z_mm))
+            print('Slice z_mm (expr.): {:0.3f}'.\
+                    format(slice_z_mm_exp))
 
             slice_data_dir = 'slice_' + str(slice_idx) + '_matrix'
 
@@ -398,67 +466,19 @@ class ImageManipulation():
 
             brain_slice.load_splines()
             X,Y = brain_slice.generate_mesh()
+            U   = np.full(X.shape, slice_z_mm_exp)
+
             if plot_in_3d: 
-                U = np.full(X.shape, c)
-                min_z = np.min((min_z,c))
-                max_z = np.max((max_z,c))
+                min_z = np.min((min_z,slice_z_mm_exp))
+                max_z = np.max((max_z,slice_z_mm_exp))
+
             x = X.ravel()
             y = Y.ravel()
+            z = U.ravel()
 
+            u = self.interpolate_intensity(x, y, z)
+            Z = u.reshape(X.shape)
 
-            idx_0 = None
-            idx_1 = None
-            z_mm_0= None
-            z_mm_1= None
-
-            for k in range(self.n_of_slice_objects-1):
-                z_mm_0 = self.sorted_experimental_z_mm[k]
-                z_mm_1 = self.sorted_experimental_z_mm[k+1]
-                z_mm_0_exp =\
-                        self.\
-                        map_model_z_mm_to_experimental_z_mm(\
-                        z_mm_0)
-                z_mm_1_exp =\
-                        self.\
-                        map_model_z_mm_to_experimental_z_mm(\
-                        z_mm_1)
-
-                c0 = z_mm_0     <= slice_z_mm
-                c1 = slice_z_mm <= z_mm_1
-
-                if c0 and c1:
-                    idx_0 = self.\
-                            sorted_indices_experimental_z_mm[k]
-                    idx_1 = self.\
-                            sorted_indices_experimental_z_mm[k+1]
-                    delta_z = z_mm_1 - z_mm_0
-
-                    print('Bound in model coordinates:')
-                    txt = '{:0.3f} <= {:0.3f} <= {:0.3f}'.\
-                            format(z_mm_0, slice_z_mm, z_mm_1)
-                    print(txt)
-                    print('Bound in experimental coordinates:')
-                    txt = '{:0.3f} <= {:0.3f} <= {:0.3f}'.\
-                            format(\
-                            z_mm_1_exp,\
-                            slice_z_mm_exp,\
-                            z_mm_0_exp,\
-                            )
-                    print(txt)
-                    txt = 'Interpolation indices: ({:d},{:d})'.\
-                            format(idx_0, idx_1)
-                    print(txt)
-
-                    break
-
-            v_0 = self.slice_properties[idx_0].\
-                    map_from_model_xy_to_experimental_matrix(x,y)
-            v_1 = self.slice_properties[idx_1].\
-                    map_from_model_xy_to_experimental_matrix(x,y)
-
-            slope = (slice_z_mm - z_mm_0)/delta_z
-            v = (v_1 - v_0) * slope + v_0
-            Z = v.reshape(X.shape)
             if plot_in_3d:
                 c_map = color_map.jet(Z/255)
                 ax.plot_surface(\
@@ -496,63 +516,257 @@ class ImageManipulation():
             ax.set_ylabel('Transverse')
             ax.set_zlabel('Coronal')
 
-            fig.savefig('brain_mesh.pdf', dpi = 300)
+            fname = 'brain_mesh.pdf'
+            fname = os.path.join(\
+                    self.postprocessing_dir,\
+                    fname)
+            fig.savefig(fname, dpi = 300)
 
 #==================================================================
     def plot_sphere(self):
-        n=20
-        theta = np.linspace(0,2*np.pi,n)
-        phi   = np.linspace(0,1*np.pi,n)
-        T,P   = np.meshgrid(theta, phi)
-        rho   = 2
-        a,b,c = self.site_of_injection_in_model_mm
-        X = rho * np.cos(T) * np.sin(P) + a
-        Y = rho * np.sin(T) * np.sin(P) + b
-        Z = rho * np.cos(P)             + c
+
+        n=40
+
+        self.slice_interpolation_setup()
+
         fig = plt.figure()
         ax  = fig.add_subplot(111, projection='3d')
         ax.set_aspect('equal')
-        ax.plot_surface(X,Y,Z)
-        fig.savefig('sphere.pdf', dpi = 300)
 
+        theta = np.linspace(0,2*np.pi,n)
+        phi   = np.linspace(0,1*np.pi,n)
+
+        theta = np.linspace(-np.pi/2,1*np.pi,n)
+        phi   = np.linspace(0,1*np.pi,n)
+
+        T,P   = np.meshgrid(theta, phi)
+        a,b,c = self.site_of_injection_in_model_mm
+
+        dr = 0.25
+        rho_vector = np.arange(dr,2+dr,dr)
+        rho_vector = [0.5, 1, 2]
+        alpha_vector = [0.3, 0.6, 0.3]
+
+        for k, rho in enumerate(rho_vector):
+
+            X = rho * np.cos(T) * np.sin(P) + a
+            Y = rho * np.sin(T) * np.sin(P) + b
+            Z = rho * np.cos(P)             + c
+
+            x = X.ravel()
+            y = Y.ravel()
+            z = Z.ravel()
+
+            z = self.map_model_z_mm_to_experimental_z_mm(z)
+
+            u = self.interpolate_intensity(x,y,z)
+            U = u.reshape(X.shape)
+
+
+
+            #ax.plot_surface(X,Y,Z)
+
+            c_map = color_map.jet(U/255)
+            ax.plot_surface(\
+                    X,Y,Z,\
+                    facecolors = c_map,\
+                    rstride = 1,\
+                    cstride = 1,\
+                    alpha = alpha_vector[k],\
+                    #linewidth = 0.05,\
+                    linewidth = 0.0,\
+                    )
+
+        ax.set_xlabel('Sagittal')
+        ax.set_ylabel('Transverse')
+        ax.set_zlabel('Coronal') 
+
+        ax.xaxis.set_ticks([0,2,4])
+        ax.yaxis.set_ticks([0,2])
+        ax.zaxis.set_ticks([-1.5, 0])
+        ax.view_init(elev=15, azim=-150)
+
+        fname = 'sphere.pdf'
+        fname = os.path.join(\
+                self.postprocessing_dir,\
+                fname)
+        fig.savefig(fname, dpi = 300)
+
+#==================================================================
+    def get_radial_plot(self):
+
+
+        self.slice_interpolation_setup()
+
+        n = 40
+        theta = np.linspace(0,2*np.pi,n)
+        phi   = np.linspace(0,1*np.pi,n)
+
+        dr = 0.01
+        rho_max = 4
+        rho   = np.arange(0,rho_max,dr)
+
+        T,P = np.meshgrid(theta, phi)
+        a,b,c = self.site_of_injection_in_model_mm
+
+        X = np.cos(T) * np.sin(P)
+        Y = np.sin(T) * np.sin(P)
+        Z = np.cos(P)
+
+        s = 0
+
+        cumulative_vec = np.zeros((rho.size,2))
+
+        for k,r in enumerate(rho):
+
+            x = r * X.ravel() + a
+            y = r * Y.ravel() + b
+            z = r * Z.ravel() + c
+
+            z = self.map_model_z_mm_to_experimental_z_mm(z)
+            u = self.interpolate_intensity(x,y,z)
+
+            mode = get_mode(u).mode[0]
+            mean = np.mean(u)
+            mx   = u.max()
+            threshold = np.max((mode,mean))
+            print('Mean = {:0.1f}, Mode = {:0.1f}, Max = {:0.1f}'.\
+                    format(mean, mode, mx))
+            #u *= threshold < u
+            u /= 255
+            s += u.sum()
+            cumulative_vec[k] = [r, s]
+
+
+        x = cumulative_vec[:,0]
+        y = cumulative_vec[:,1]
+
+        stride = 4
+        spline = cspline(\
+                x[::stride],\
+                y[::stride],\
+                )
+        spline_prime = spline.derivative()
+
+        xp = np.linspace(0,rho_max,100)
+        yp = spline_prime(xp)
+
+        fig = plt.figure()
+        ax  = fig.add_subplot(111)
+        ax.plot(x,y,'b-')
+        fig.suptitle('Cumulative intensity')
+        ax.set_xlabel('Distance from injection (mm)')
+        txt  = r'$C(r)='
+        txt += r'\int_{0}^{r}'
+        txt += r'\int_{0}^{\pi}'
+        txt += r'\int_{0}^{2\pi}'
+        txt += r'I(\rho,\phi,\theta)'
+        txt += r'\, d\theta \, d\phi \, d\rho$'
+        ax.set_ylabel(txt)
+        ax.yaxis.set_ticks(np.linspace(0,y.max(),4))
+        ax.set_yscale('log')
+        #fig.canvas.draw()
+        #yticklabels = ax.get_yticklabels()
+        #yticklabels = [label.get_text() for label in yticklabels]
+        #yticklabels = ['{:.0e}'.format(float(label)) for label in yticklabels]
+        #ax.set_yticklabels(yticklabels)
+        fname = 'integral_radial.pdf'
+        fname = os.path.join(\
+                self.postprocessing_dir,\
+                fname)
+        fig.savefig(fname, dpi = 300)
+
+        fig.clf()
+        ax = fig.add_subplot(111)
+
+        ax.plot(xp,yp,'b-')
+        fig.suptitle('Radial intensity')
+        ax.set_xlabel('Distance from injection (mm)')
+        fig.canvas.draw()
+        yticklabels = ax.get_yticklabels()
+        yticklabels = [label.get_text() for label in yticklabels]
+        yticklabels = [float(label) for label in yticklabels]
+        yticklabels = ['{:.0e}'.format(label) for label in yticklabels]
+        ax.set_yticklabels(yticklabels)
+        txt  = r'$dC/d\rho$'
+        ax.set_ylabel(txt)
+        
+        fname = 'derivative_radial.pdf'
+        fname = os.path.join(\
+                self.postprocessing_dir,\
+                fname)
+        fig.savefig(fname, dpi = 300)
 
 #==================================================================
     def slice_interpolation_setup(self):
 
         self.load_experimental_data_essentials()
+
         self.add_zero_slices_from_safe_range()
 
         self.list_of_experimental_z_mm =\
                 np.array(self.list_of_experimental_z_mm)
 
-
         self.sorted_indices_experimental_z_mm =\
                 np.argsort(self.list_of_experimental_z_mm)
+
         self.sorted_experimental_z_mm =\
                 self.list_of_experimental_z_mm[\
                 self.sorted_indices_experimental_z_mm]
+
         self.n_of_slice_objects =\
                 len(self.list_of_experimental_z_mm)
+
+        self.sorted_slice_properties =\
+                [self.slice_properties[idx]\
+                for idx in self.sorted_indices_experimental_z_mm]
 
         print('The sorted indices are:')
         print(self.sorted_indices_experimental_z_mm)
 
-
-        print('Experimental z_mm in model coordinates:')
+        print('Experimental z_mm in experimental coordinates:')
         print(self.sorted_experimental_z_mm)
 
-        print('Experimental z_mm in expr. coordinates:')
-        print(self.map_model_z_mm_to_experimental_z_mm(\
+        print('Experimental z_mm in model coordinates:')
+        print(self.map_experimental_z_mm_to_model_z_mm(\
                 self.sorted_experimental_z_mm))
 
 #==================================================================
     def add_zero_slices_from_safe_range(self):
+
         for v in self.safe_range:
-            z_mm = self.map_model_z_n_to_mm(v)
+
+            model_z_mm = self.map_model_z_n_to_mm(v)
             SP = SliceProperties()
-            SP.model_z_mm = z_mm
+            SP.model_z_mm = model_z_mm
+
+            experimental_z_mm =\
+                    self.map_model_z_mm_to_experimental_z_mm(\
+                    model_z_mm)
+
+            SP.experimental_z_mm = experimental_z_mm
+
             self.slice_properties.append(SP)
-            self.list_of_experimental_z_mm.append(z_mm)
+            self.list_of_experimental_z_mm.append(\
+                    experimental_z_mm)
+
+        infinity_range = (-1000, 1000)
+        for v in infinity_range:
+
+            model_z_mm = self.map_model_z_n_to_mm(v)
+            SP = SliceProperties()
+            SP.model_z_mm = model_z_mm
+
+            experimental_z_mm =\
+                    self.map_model_z_mm_to_experimental_z_mm(\
+                    model_z_mm)
+
+            SP.experimental_z_mm = experimental_z_mm
+
+            self.slice_properties.append(SP)
+            self.list_of_experimental_z_mm.append(\
+                    experimental_z_mm)
+
 
 #==================================================================
     def load_experimental_data_essentials(self):
@@ -577,8 +791,16 @@ class ImageManipulation():
                     self.xy_experimental_center_in_model_mm
 
             experimental_z_n = int(obj.group('z_n'))
-            print('The expr. z_n  = {:d}'.format(experimental_z_n))
             SP.experimental_z_n = experimental_z_n
+            print('The expr. z_n  = {:d}'.\
+                    format(experimental_z_n))
+
+            experimental_z_mm =\
+                    self.map_experimental_z_n_to_mm(\
+                    experimental_z_n)
+            SP.experimental_z_mm = experimental_z_mm
+            print('The expr. z_mm  = {:0.3f}'.\
+                    format(experimental_z_mm))
 
             model_z_n =\
                     self.map_experimental_z_n_to_model_z_n(\
@@ -643,11 +865,8 @@ class ImageManipulation():
 
             self.slice_properties.append(SP)
 
-            self.list_of_experimental_z_mm.append(SP.model_z_mm)
-
-            print('================')
-
-
+            self.list_of_experimental_z_mm.append(\
+                    SP.experimental_z_mm)
 
 #==================================================================
     def generate_experimental_data_essentials(self):
