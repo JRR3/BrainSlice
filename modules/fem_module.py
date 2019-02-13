@@ -2,37 +2,77 @@ import fenics as fe
 import numpy as np
 import mshr as mesher
 import sympy 
-#import dolfin 
+
+
+from image_manipulation_module import ImageManipulation
 
 class FEMSimulation():
 
 #==================================================================
     def __init__(self):
 
+        self.mode = 'test'
+        #self.mode = 'exp'
+        self.image_manipulation_obj = ImageManipulation()
         self.initial_time = 0.0
         self.final_time   = 2.0
-        self.diffusion_matrix = np.array([[2.,1.],[1.,4.]])
+        self.diffusion_matrix = None
         self.dt           = 0.05
         self.error_list   = []
         self.u_exact_str  = None
         self.rhs_fun_str  = None
-        self.alpha        = 3.0
-        self.beta         = 1.2
-        self.lam          = 1.0
-        self.u_boundary   = None
+        self.alpha        = 0
+        self.beta         = 0
+        self.kappa        = 0.5
+        self.lam          = 0
+        self.boundary_fun = None
         self.boundary_conditions = None
         self.mesh         = None
         self.u            = None
         self.u_n          = None
         self.rhs_fun      = None
+        self.ic_fun       = None
         self.bilinear_form= None
         self.rhs          = None
         self.current_time = 0
         self.function_space = None
         self.vtkfile      = fe.File('diffusion/solution.pvd')
 
+        if self.mode == 'test': 
+            self.alpha        = 3.0
+            self.beta         = 1.2
+            self.lam          = 1.0
+            self.diffusion_matrix = np.array([[1., 0.],[0., 1.]])
+
+            print('Lambda: ', self.lam)
+            print('Alpha : ', self.alpha)
+            print('Beta  : ', self.beta)
+        else:
+            self.alpha        = 1.8
+            self.beta         = 0
+            self.diffusion_matrix = np.array([[1., 0],[0, 1.]])
+
+#==================================================================
+    def create_initial_condition_function(self):
+
+        if self.mode == 'test':
+            return
+
+        x,y,a,b,k = sympy.symbols('x[0], x[1], alpha, beta, kappa')
+        ic = exp(-kappa * ((x-a)**2 + (y-b)**2))
+        ic_str = sympy.printing.ccode(ic)
+        self.ic_fun =\
+                fe.Expression(ic_str, degree=2,\
+                alpha = self.alpha, beta = self.beta, kappa = self.kappa)
+
 #==================================================================
     def create_exact_solution_and_rhs_fun_strings(self):
+
+        if self.mode != 'test':
+            return
+
+        print('Creating exact solution and rhs strings')
+
         x,y,a,b,l,t = sympy.symbols('x[0], x[1], alpha, beta, lam, t')
         u_exact = 1 + x**2 + a * y**2 + b * t
         u_t = u_exact.diff(t)
@@ -46,29 +86,42 @@ class FEMSimulation():
 #==================================================================
     def create_rhs_fun(self):
 
-        self.rhs_fun = fe.Expression(self.rhs_fun_str, degree=2,\
-                alpha = self.alpha, beta = self.beta, lam = self.lam, t = 0)
+        if self.mode == 'test': 
+
+            print('Creating rhs function')
+            self.rhs_fun = fe.Expression(self.rhs_fun_str, degree=2,\
+                    alpha = self.alpha,\
+                    beta  = self.beta,\
+                    lam   = self.lam,\
+                    t     = 0)
+        else:
+            self.rhs_fun = fe.Constant(0)
 
 #==================================================================
     def create_boundary_conditions(self):
 
-        self.u_boundary = fe.Expression(self.u_exact_str, degree=2,\
-                alpha = self.alpha, beta = self.beta, t = 0)
+        if self.mode == 'test':
+
+            print('Creating boundary function')
+            self.boundary_fun = fe.Expression(self.u_exact_str, degree=2,\
+                    alpha = self.alpha, beta = self.beta, t = 0)
+
+        else:
+            self.boundary_fun = fe.Constant(0)
+
 
         def is_on_the_boundary(x, on_boundary):
             return on_boundary
 
         self.boundary_conditions = fe.DirichletBC(\
-                self.function_space, self.u_boundary, is_on_the_boundary)
+                self.function_space, self.boundary_fun, is_on_the_boundary)
 
 #==================================================================
-    def create_mesh(self):
+    def create_simple_mesh(self):
 
         #domain      = mesher.Circle(fe.Point(0,0), 1)
         #mesh        = mesher.generate_mesh(domain, 64)
-        nx = ny     = 8
-        self.mesh   = fe.UnitSquareMesh(nx, ny)
-        M = fe.Mesh()
+        '''
         domain_vertices = [\
                 fe.Point(0.0, 0.0),\
                 fe.Point(10.0, 0.0),\
@@ -80,8 +133,12 @@ class FEMSimulation():
                 fe.Point(0.0, 4.0),\
                 fe.Point(0.0, 0.0)]
 
-        M = mesher.generate_mesh(domain_vertices, 64);
-        exit()
+        geo = mesher.Polygon(domain_vertices)
+        self.mesh   = mesher.generate_mesh(geo, 64);
+        '''
+        print('Creating simple mesh')
+        nx = ny     = 8
+        self.mesh   = fe.UnitSquareMesh(nx, ny)
 
         coordinates = self.mesh.coordinates()
 
@@ -92,6 +149,31 @@ class FEMSimulation():
             break
 
 #==================================================================
+    def create_mesh(self):
+
+        if self.mode == 'test':
+            self.create_simple_mesh()
+        else:
+            self.create_coronal_section_mesh()
+
+#==================================================================
+    def create_coronal_section_mesh(self):
+
+        brain_slice = self.image_manipulation_obj.\
+                get_brain_slice_from_experimental_z_mm(0)
+
+        x_size = 65
+        points = brain_slice.\
+                generate_boundary_points_ccw(x_size)
+        domain_vertices = []
+
+        for x,y in zip(points[0], points[1]):
+            domain_vertices.append(fe.Point(x,y))
+
+        geo         = mesher.Polygon(domain_vertices)
+        self.mesh   = mesher.generate_mesh(geo, 64);
+
+#==================================================================
     def set_function_spaces(self):
 
         self.function_space = fe.FunctionSpace(self.mesh, 'P', 2)
@@ -99,10 +181,13 @@ class FEMSimulation():
 #==================================================================
     def compute_error(self):
 
-        error_L2 = fe.errornorm(self.u_boundary, self.u_n, 'L2')
+        if self.mode != 'test':
+            return
+
+        error_L2 = fe.errornorm(self.boundary_fun, self.u_n, 'L2')
         error_LI = np.abs(\
                 fe.interpolate(\
-                self.u_boundary,self.function_space).vector().get_local() -\
+                self.boundary_fun,self.function_space).vector().get_local() -\
                 self.u_n.vector().get_local()\
                 ).max()
 
@@ -118,13 +203,18 @@ class FEMSimulation():
     def set_initial_conditions(self):
 
         self.current_time = self.initial_time
-        self.u_boundary.t = self.current_time
 
         #Initial condition
-        #self.u_n = fe.project(self.u_boundary, self.function_space)
+        #self.u_n = fe.project(self.boundary_fun, self.function_space)
 
-        self.u_n = fe.interpolate(self.u_boundary, self.function_space)
-        self.u   = fe.Function(self.function_space)
+        if self.mode == 'test':
+            print('Setting initial conditions')
+            self.boundary_fun.t = self.current_time
+            self.u_n = fe.interpolate(self.boundary_fun, self.function_space)
+        else:
+            self.u_n = fe.project(self.ic_fun, self.function_space)
+
+        self.u = fe.Function(self.function_space)
 
         self.compute_error()
         self.save_snapshot()
@@ -133,7 +223,6 @@ class FEMSimulation():
     def create_bilinear_form_and_rhs(self):
 
         diffusion_tensor = fe.as_matrix(self.diffusion_matrix)
-
 
         finite_element         = self.function_space.element()
         map_cell_index_to_dofs = self.function_space.dofmap()
@@ -168,6 +257,7 @@ class FEMSimulation():
     def run(self):
 
         self.create_exact_solution_and_rhs_fun_strings()
+        self.create_initial_condition_function()
         self.create_rhs_fun()
         self.create_mesh()
         self.set_function_spaces()
@@ -175,17 +265,23 @@ class FEMSimulation():
         self.set_initial_conditions()
         self.create_bilinear_form_and_rhs()
 
+        c = 0
+
         while self.current_time < self.final_time: 
             
             self.current_time += self.dt
-            self.u_boundary.t = self.current_time
-            self.rhs_fun.t    = self.current_time
+            print('t = {:0.2f}'.format(self.current_time))
+            self.boundary_fun.t = self.current_time
+            self.rhs_fun.t      = self.current_time
             self.solve_problem()
             self.u_n.assign(self.u)
             self.compute_error()
             self.save_snapshot()
 
             print('------------------------')
+            
+            c += 1
+
         
         print('Alles ist gut')
 

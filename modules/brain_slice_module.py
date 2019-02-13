@@ -1,5 +1,5 @@
 from scipy import misc
-from scipy.interpolate import CubicSpline as cspline
+from scipy import interpolate
 import numpy as np
 import cv2
 import os
@@ -353,13 +353,18 @@ class BrainSection():
         plt.close('all')
 
 #==================================================================
-    def generate_mesh(self):
+    def generate_boundary_points_ccw(self, x_size):
 
-        x_size = 35
-        y_size = 30
+        x, y_bottom, y_top = self.\
+                generate_lower_and_upper_boundary(x_size)
 
-        x_size = 65
-        y_size = 60
+        lower = np.vstack((x,y_bottom))
+        upper = np.vstack((x[-2:0:-1],y_top[-2:0:-1]))
+
+        return np.hstack((lower,upper))
+
+#==================================================================
+    def generate_lower_and_upper_boundary(self, x_size):
 
         x_min  = self.splines[0][0][0]
         x_max  = self.splines[0][0][-1]
@@ -368,12 +373,27 @@ class BrainSection():
                 x_min,\
                 x_max,\
                 x_size)
-        y = np.linspace(0,1,y_size)
-        x_positive_indices = 0 < x
+        y_top    = interpolate.splev(x, self.splines[1])
+        y_bottom = interpolate.splev(x, self.splines[0])
 
-        y_top = interpolate.splev(x, self.splines[1])
-        y_bottom = interpolate.splev(x, self.splines[0])
-        y_bottom = interpolate.splev(x, self.splines[0])
+        return (x, y_bottom, y_top)
+
+#==================================================================
+    def generate_mesh_from_splines(self):
+
+        x_size = 35
+        y_size = 30
+
+        x_size = 65
+        y_size = 60
+
+        y = np.linspace(0,1,y_size)
+
+        x, y_bottom, y_top = self.generate_lower_and_upper_boundary(x_size)
+        x_positive_indices = 0 < x
+        '''
+        Remove quadrant IV
+        '''
         y_bottom *= (1 - x_positive_indices)
 
 

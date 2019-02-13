@@ -10,7 +10,6 @@ from matplotlib.colors import LinearSegmentedColormap as lsc
 from mpl_toolkits.mplot3d import Axes3D
 import re
 import cv2
-import matplotlib.ticker as mtick
 
 #sys.path.insert(0, '.')
 from timing_module import TimeIt
@@ -130,7 +129,6 @@ class ImageManipulation():
         pixel = voxel[[0,2]].astype(int)
 
         return pixel
-
 
 
 #==================================================================
@@ -261,6 +259,36 @@ class ImageManipulation():
             obj.store_boundary_pixels()
 
 #==================================================================
+    def get_brain_slice_from_experimental_z_mm(self, z_mm):
+
+        model_z_mm = self.map_experimental_z_mm_to_model_z_mm(z_mm)
+        return self.get_brain_slice_from_model_z_mm(model_z_mm)
+
+#==================================================================
+    def get_brain_slice_from_model_z_mm(self, z_mm):
+
+        z_n = self.map_model_z_mm_to_z_n(z_mm)
+        return self.get_brain_slice_from_model_z_n(z_n)
+
+#==================================================================
+    def get_brain_slice_from_model_z_n(self, slice_idx):
+
+        slice_data_dir = 'slice_' + str(slice_idx) + '_matrix'
+
+        local_slice_dir =\
+                os.path.join(\
+                self.brain_slices_dir, slice_data_dir)
+
+        brain_slice =\
+                BrainSection(\
+                local_slice_dir,\
+                slice_idx)
+
+        brain_slice.load_splines()
+
+        return brain_slice
+
+#==================================================================
     def create_boundary_and_spline_data(self):
 
         self.load_nib_file()
@@ -350,7 +378,11 @@ class ImageManipulation():
         return cropped_img
 
 #==================================================================
-    def interpolate_intensity(self, x, y, z):
+    def interpolate_intensity(self, x, y, z,\
+            using_experimental_coordinates_for_z = True):
+
+        if not using_experimental_coordinates_for_z:
+            z = self.map_model_z_mm_to_experimental_z_mm(z)
 
         sorted_z_indices = np.argsort(z)
 
@@ -453,25 +485,20 @@ class ImageManipulation():
             print('Slice z_mm (expr.): {:0.3f}'.\
                     format(slice_z_mm_exp))
 
-            slice_data_dir = 'slice_' + str(slice_idx) + '_matrix'
 
-            local_slice_dir =\
-                    os.path.join(\
-                    self.brain_slices_dir, slice_data_dir)
+            brain_slice = self.get_brain_slice_from_model_z_n(slice_idx)
+            X,Y = brain_slice.generate_mesh_from_splines()
 
-            brain_slice =\
-                    BrainSection(\
-                    local_slice_dir,\
-                    slice_idx)
-
-            brain_slice.load_splines()
-            X,Y = brain_slice.generate_mesh()
             U   = np.full(X.shape, slice_z_mm_exp)
 
             if plot_in_3d: 
                 min_z = np.min((min_z,slice_z_mm_exp))
                 max_z = np.max((max_z,slice_z_mm_exp))
 
+            '''
+            Note that the (x,y) values are in model coordinates, while the z
+            values are in experimental coordinates.
+            '''
             x = X.ravel()
             y = Y.ravel()
             z = U.ravel()
@@ -1193,7 +1220,7 @@ class ImageManipulation():
                     experimental_img[:,:,:])
 
             '''
-            Store red channel
+            Store red channel in jpeg and matrix format
             Recall that the output format is BGR
             '''
             channel = experimental_img[:,:,2]
