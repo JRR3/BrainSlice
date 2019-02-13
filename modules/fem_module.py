@@ -11,8 +11,8 @@ class FEMSimulation():
 #==================================================================
     def __init__(self):
 
-        self.mode = 'test'
-        #self.mode = 'exp'
+        #self.mode = 'test'
+        self.mode = 'exp'
         self.image_manipulation_obj = ImageManipulation()
         self.initial_time = 0.0
         self.final_time   = 2.0
@@ -23,7 +23,7 @@ class FEMSimulation():
         self.rhs_fun_str  = None
         self.alpha        = 0
         self.beta         = 0
-        self.kappa        = 0.5
+        self.kappa        = 0
         self.lam          = 0
         self.boundary_fun = None
         self.boundary_conditions = None
@@ -36,7 +36,7 @@ class FEMSimulation():
         self.rhs          = None
         self.current_time = 0
         self.function_space = None
-        self.vtkfile      = fe.File('diffusion/solution.pvd')
+        self.vtkfile      = fe.File('diffusion/R2/solution.pvd')
 
         if self.mode == 'test': 
             self.alpha        = 3.0
@@ -50,7 +50,9 @@ class FEMSimulation():
         else:
             self.alpha        = 1.8
             self.beta         = 0
-            self.diffusion_matrix = np.array([[1., 0],[0, 1.]])
+            self.lam          = 1.0
+            self.kappa        = 0.5
+            self.diffusion_matrix = np.array([[1., 0.],[0., 1.]])
 
 #==================================================================
     def create_initial_condition_function(self):
@@ -59,7 +61,7 @@ class FEMSimulation():
             return
 
         x,y,a,b,k = sympy.symbols('x[0], x[1], alpha, beta, kappa')
-        ic = exp(-kappa * ((x-a)**2 + (y-b)**2))
+        ic = sympy.exp(-k * ((x-a)**2 + (y-b)**2))
         ic_str = sympy.printing.ccode(ic)
         self.ic_fun =\
                 fe.Expression(ic_str, degree=2,\
