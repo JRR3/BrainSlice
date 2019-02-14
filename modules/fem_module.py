@@ -11,8 +11,9 @@ class FEMSimulation():
 #==================================================================
     def __init__(self):
 
-        #self.mode = 'test'
-        self.mode = 'exp'
+        self.mode = 'test'
+        #self.mode = 'exp'
+        self.dimension = 1
         self.image_manipulation_obj = ImageManipulation()
         self.initial_time = 0.0
         self.final_time   = 2.0
@@ -36,23 +37,32 @@ class FEMSimulation():
         self.rhs          = None
         self.current_time = 0
         self.function_space = None
-        self.vtkfile      = fe.File('diffusion/R2/solution.pvd')
+
+        if self.dimension == 1:
+            self.vtkfile = fe.File('diffusion/1D/test/solution.pvd')
+
+        if self.dimension == 2:
+            self.vtkfile = fe.File('diffusion/2D/test/solution.pvd')
 
         if self.mode == 'test': 
             self.alpha        = 3.0
             self.beta         = 1.2
             self.lam          = 1.0
-            self.diffusion_matrix = np.array([[1., 0.],[0., 1.]])
+            self.diffusion_matrix = np.array([[3., 2.],[1.6125, 1.]])
 
             print('Lambda: ', self.lam)
             print('Alpha : ', self.alpha)
             print('Beta  : ', self.beta)
+
         else:
             self.alpha        = 1.8
             self.beta         = 0
             self.lam          = 1.0
             self.kappa        = 0.5
             self.diffusion_matrix = np.array([[1., 0.],[0., 1.]])
+
+        if self.dimension == 1:
+            self.diffusion_matrix = 1.
 
 #==================================================================
     def create_initial_condition_function(self):
@@ -61,8 +71,15 @@ class FEMSimulation():
             return
 
         x,y,a,b,k = sympy.symbols('x[0], x[1], alpha, beta, kappa')
-        ic = sympy.exp(-k * ((x-a)**2 + (y-b)**2))
+
+        if self.dimension == 1: 
+            ic = sympy.exp(-k * ((x-a)**2))
+
+        if self.dimension == 2: 
+            ic = sympy.exp(-k * ((x-a)**2 + (y-b)**2))
+
         ic_str = sympy.printing.ccode(ic)
+
         self.ic_fun =\
                 fe.Expression(ic_str, degree=2,\
                 alpha = self.alpha, beta = self.beta, kappa = self.kappa)
@@ -76,12 +93,27 @@ class FEMSimulation():
         print('Creating exact solution and rhs strings')
 
         x,y,a,b,l,t = sympy.symbols('x[0], x[1], alpha, beta, lam, t')
-        u_exact = 1 + x**2 + a * y**2 + b * t
+
+        if self.dimension == 2: 
+            u_exact = 1 + x**2 + a * y**2 + b * t
+
+        if self.dimension == 1: 
+            u_exact = 1 + a * x**2 + b * t
+
         u_t = u_exact.diff(t)
-        grad_u = sympy.Matrix([u_exact]).jacobian([x,y]).T
-        diffusion_grad_u = self.diffusion_matrix * grad_u
-        diffusion_term = diffusion_grad_u.jacobian([x,y]).trace()
+
+        if self.dimension == 1: 
+            grad_u = u_exact.diff(x)
+            diffusion_grad_u = self.diffusion_matrix * grad_u
+            diffusion_term = diffusion_grad_u.diff(x)
+
+        if self.dimension == 2: 
+            grad_u = sympy.Matrix([u_exact]).jacobian([x,y]).T
+            diffusion_grad_u = self.diffusion_matrix * grad_u
+            diffusion_term = diffusion_grad_u.jacobian([x,y]).trace()
+
         rhs_fun = u_t - diffusion_term + l*u_exact
+
         self.u_exact_str = sympy.printing.ccode(u_exact)
         self.rhs_fun_str = sympy.printing.ccode(rhs_fun)
 
@@ -139,8 +171,13 @@ class FEMSimulation():
         self.mesh   = mesher.generate_mesh(geo, 64);
         '''
         print('Creating simple mesh')
-        nx = ny     = 8
-        self.mesh   = fe.UnitSquareMesh(nx, ny)
+        nx = ny = 8
+
+        if self.dimension == 1: 
+            self.mesh = fe.UnitIntervalMesh(nx)
+
+        if self.dimension == 2: 
+            self.mesh = fe.UnitSquareMesh(nx, ny)
 
         coordinates = self.mesh.coordinates()
 
@@ -160,6 +197,11 @@ class FEMSimulation():
 
 #==================================================================
     def create_coronal_section_mesh(self):
+
+        if self.dimension == 1:
+            nx = 30
+            self.mesh = fe.IntervalMesh(nx,-4, 4)
+            return
 
         brain_slice = self.image_manipulation_obj.\
                 get_brain_slice_from_experimental_z_mm(0)
@@ -224,7 +266,6 @@ class FEMSimulation():
 #==================================================================
     def create_bilinear_form_and_rhs(self):
 
-        diffusion_tensor = fe.as_matrix(self.diffusion_matrix)
 
         finite_element         = self.function_space.element()
         map_cell_index_to_dofs = self.function_space.dofmap()
@@ -236,10 +277,19 @@ class FEMSimulation():
         u = fe.TrialFunction(self.function_space)
         v = fe.TestFunction(self.function_space)
 
-        self.bilinear_form = (1 + self.lam * self.dt) * (u * v * fe.dx) +\
-                self.dt * (fe.dot(\
-                fe.dot(diffusion_tensor, fe.grad(u)),\
-                fe.grad(v)) * fe.dx)
+        if self.dimension == 1:
+            diffusion_tensor = self.diffusion_matrix
+            self.bilinear_form = (1 + self.lam * self.dt) * (u * v * fe.dx) +\
+                    self.dt * (fe.dot(\
+                    diffusion_tensor * fe.grad(u),\
+                    fe.grad(v)) * fe.dx)
+
+        if self.dimension == 2:
+            diffusion_tensor = fe.as_matrix(self.diffusion_matrix)
+            self.bilinear_form = (1 + self.lam * self.dt) * (u * v * fe.dx) +\
+                    self.dt * (fe.dot(\
+                    fe.dot(diffusion_tensor, fe.grad(u)),\
+                    fe.grad(v)) * fe.dx)
 
 
         self.rhs = (self.u_n + self.dt * self.rhs_fun) * v * fe.dx
@@ -267,8 +317,6 @@ class FEMSimulation():
         self.set_initial_conditions()
         self.create_bilinear_form_and_rhs()
 
-        c = 0
-
         while self.current_time < self.final_time: 
             
             self.current_time += self.dt
@@ -282,10 +330,11 @@ class FEMSimulation():
 
             print('------------------------')
             
-            c += 1
-
         
         print('Alles ist gut')
+        print(np.linalg.det(self.diffusion_matrix))
+        print(np.linalg.eig(self.diffusion_matrix)[0])
+        
 
 
 
