@@ -26,8 +26,8 @@ from fem_module import FEMSimulation
 #obj.plot_interpolated_slices()
 #obj.plot_sphere()
 
-obj = FEMSimulation()
-obj.run()
+#obj = FEMSimulation()
+#obj.run()
 
 #x  = obj.map_experimental_z_n_to_model_z_n(2)
 #print(obj.map_model_z_n_to_mm(1000))

@@ -33,7 +33,7 @@ class ImageManipulation():
         respect to the model coordinate system.
         '''
         self.xy_experimental_center_in_model_mm =\
-                np.array([2,0]) 
+                np.array([1.8, 0.]) 
         
         '''
         From top of the brain (bregma) to site of injection
