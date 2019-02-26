@@ -17,16 +17,18 @@ from fem_module import FEMSimulation
 
 #==================================================================
 
-#obj = ImageManipulation()
+obj = ImageManipulation()
 #obj.get_radial_plot()
 
 #obj.store_boundary_data()
-#obj.generate_experimental_data_essentials()
+#obj.generate_raw_data_essential_information()
 #obj.load_experimental_data_essentials()
 #obj.plot_interpolated_slices()
 #obj.plot_sphere()
 
-#obj = FEMSimulation()
+obj = FEMSimulation()
+obj.create_coronal_section_vectors()
+obj.optimize()
 #obj.run()
 
 #x  = obj.map_experimental_z_n_to_model_z_n(2)

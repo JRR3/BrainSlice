@@ -379,7 +379,7 @@ class BrainSection():
         return (x, y_bottom, y_top)
 
 #==================================================================
-    def generate_mesh_from_splines(self):
+    def generate_mesh_from_splines(self, remove_quadrant_iv = False):
 
         x_size = 35
         y_size = 30
@@ -390,11 +390,13 @@ class BrainSection():
         y = np.linspace(0,1,y_size)
 
         x, y_bottom, y_top = self.generate_lower_and_upper_boundary(x_size)
-        x_positive_indices = 0 < x
+
         '''
         Remove quadrant IV
         '''
-        y_bottom *= (1 - x_positive_indices)
+        if remove_quadrant_iv == True:
+            x_positive_indices = 0 < x
+            y_bottom *= (1 - x_positive_indices)
 
 
         X,Y =  np.meshgrid(x,y)
