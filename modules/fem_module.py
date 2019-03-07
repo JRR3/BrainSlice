@@ -5,7 +5,7 @@ import sympy
 import os
 import re
 from scipy.optimize import least_squares as lsq
-
+import matplotlib.pyplot as plt
 
 from image_manipulation_module import ImageManipulation
 
@@ -14,19 +14,27 @@ class FEMSimulation():
 #==================================================================
     def __init__(self, storage_dir = None):
 
+        self.current_dir  = os.getcwd()
+
+        self.postprocessing_dir = os.path.join(\
+                self.current_dir, 'postprocessing')
+
         #self.mode = 'test'
-        self.use_hg   = False
+        #self.use_hg  = False
+        self.use_hg   = True
         self.fast_run = None
         self.mode = 'exp'
         self.experimental_z_n = 1
         self.dimension = 2
         self.image_manipulation_obj = ImageManipulation()
-        self.initial_time = 0.0
-        self.final_time   = 4.0
+
+        self.initial_time = 1
+        self.final_time   = None
+        self.current_time = None
 
         self.diffusion_matrix = None
         self.diffusion_coefficient = 1.0
-        self.lam          = 1
+        self.lam = 1
 
         self.dt           = 0.05
         self.error_list   = []
@@ -44,30 +52,45 @@ class FEMSimulation():
         self.ic_fun       = None
         self.bilinear_form= None
         self.rhs          = None
-        self.current_time = 0
         self.function_space = None
 
         self.fem_opt_data_source_dir  = None
         self.fem_opt_exp_data_vec_dir = None
         self.fem_opt_img_storage_dir  = None
+        #self.fem_opt_time_points = np.array([5], dtype=int)
+        self.fem_opt_time_points = np.array([5,10], dtype=int)
         self.u_experimental = None
+        self.residual_list  = None
 
         self.experimental_data_vec = []
         self.experimental_data_day = []
-        self.experimental_data_sorted_indices = None
+        self.n_experimental_time_points = 0
+        self.map_experimental_data_day_to_index = {}
 
 
         #self.set_parameters()
         self.set_data_dirs()
 
 #==================================================================
-    def get_real_time(self):
+    def plot_coordinate_map(self):
 
-        return self.current_time + 1
+        fig = plt.figure()
+        ax  = fig.add_subplot(111)
+        x = np.array([-4,-2,0,+0.6])
+        y = np.array([-1.1, -2.495, -4.295, -4.895])
+        ax.plot(x,y,'b-')
+        ax.plot(x[[0,-1]],y[[0,-1]],'r-')
+        slope = (y[-1] - y[0])/(x[-1]-x[0])
+        b     = -slope * x[0] + y[0]
+        print('Line equation: y =', slope, '* x +', b)
+        ax.set_aspect('equal')
+        ax.set_xlabel("Giulia's coordinates")
+        ax.set_ylabel("Model's coordinates")
+        fname = os.path.join(self.postprocessing_dir, 'coordinate_map.pdf')
+        fig.savefig(fname, dpi=300)
 
 #==================================================================
     def set_data_dirs(self):
-
 
         with_hg = 'HG-NPs_tumor-bearing'
         no_hg   = 'NPS_TUMOR-BEARING'
@@ -321,9 +344,15 @@ class FEMSimulation():
     def set_opt_initial_conditions(self):
 
         self.current_time = self.initial_time
+        self.final_time   = self.fem_opt_time_points.max()
+
+        self.residual_list = []
+
         self.u   = fe.Function(self.function_space)
         self.u_n = fe.Function(self.function_space)
-        self.u_n.assign(self.u_experimental[0])
+
+        index = self.map_experimental_data_day_to_index[self.initial_time]
+        self.u_n.assign(self.u_experimental[index])
         self.save_snapshot()
 
 #==================================================================
@@ -351,6 +380,8 @@ class FEMSimulation():
     def load_coronal_section_vectors(self):
         
         day_regexp = re.compile(r'vector_day_(?P<day>[0-9]+)')
+        self.n_experimental_time_points = 0
+        index = 0
         for (dir_path, dir_names, file_names) in\
                 os.walk(self.fem_opt_exp_data_vec_dir):
             for f in file_names:
@@ -367,9 +398,10 @@ class FEMSimulation():
 
                 self.experimental_data_vec.append(np.loadtxt(fname))
                 self.experimental_data_day.append(day)
+                self.map_experimental_data_day_to_index[day] = index
+                index += 1
+                self.n_experimental_time_points += 1
 
-        self.experimental_data_sorted_indices =\
-                np.argsort(self.experimental_data_day)
 
 #==================================================================
     def create_coronal_section_vectors(self):
@@ -428,8 +460,8 @@ class FEMSimulation():
 
         self.create_coronal_section_mesh(experimental_z_n)
 
-        #Only for linear elements
         self.set_function_spaces()
+        #Only for linear elements
 
         dof_to_vertex_vec = fe.dof_to_vertex_map(self.function_space)
         coordinates = self.mesh.coordinates()[dof_to_vertex_vec]
@@ -521,11 +553,11 @@ class FEMSimulation():
     def load_opt_experimental_data(self):
 
         self.load_coronal_section_vectors()
-        self.u_experimental = ['0'] * len(self.experimental_data_day)
-        for c, idx in enumerate(self.experimental_data_sorted_indices):
+        self.u_experimental = []
+        for k in range(self.n_experimental_time_points):
             u = fe.Function(self.function_space)
-            u.vector().set_local(self.experimental_data_vec[c])
-            self.u_experimental[idx] = u
+            u.vector().set_local(self.experimental_data_vec[k])
+            self.u_experimental.append(u)
 
 #==================================================================
     def optimization_setup(self):
@@ -535,6 +567,17 @@ class FEMSimulation():
         self.create_rhs_fun()
         self.create_boundary_conditions()
         self.load_opt_experimental_data()
+
+
+#==================================================================
+    def save_opt_residual_vectors(self):
+
+        for k, opt_time in enumerate(self.fem_opt_time_points):
+            if 2 * np.abs(self.current_time - opt_time) < self.dt:
+                index = self.map_experimental_data_day_to_index[opt_time]
+                v = self.u.vector() - self.u_experimental[index].vector()
+                self.residual_list.append(v.get_local())
+                break
 
 
 #==================================================================
@@ -549,15 +592,14 @@ class FEMSimulation():
             print('D = {:0.2e}, L = {:0.2e}, t = {:0.2f}'.format(\
                     self.diffusion_coefficient,\
                     self.lam,\
-                    self.get_real_time()))
+                    self.current_time))
             self.boundary_fun.t = self.current_time
             self.rhs_fun.t      = self.current_time
             self.solve_problem()
             self.u_n.assign(self.u)
+            self.save_opt_residual_vectors()
             self.save_snapshot()
 
-        print('Real time:', self.get_real_time(), 'days')
-        
 #==================================================================
     def optimize(self):
 
@@ -573,17 +615,32 @@ class FEMSimulation():
 
             if self.lam != 0:
                 p = np.array([1., 1.])
+                '''
+                Estimate for HG: False
+                T = 5
+                p = np.array([0.01646613, 0.18810675])
+                '''
 
-            obj = lsq(self.objective_function, p)
-            p = obj.x
+                '''
+                Estimate for HG: True
+                T = 5
+                '''
+                p = np.array([0.01343025, 0.05155523])
+
+
+            fit = lsq(self.objective_function, p, bounds=(0,np.inf))
+            p = fit.x
 
         self.fast_run = False
         self.objective_function(p)
-
         print('Plotting complete')
 
+        print('>>>Finished optimizing with:')
+        print('HG    :', self.use_hg)
+        print('Lambda:', self.lam != 0)
+
         if jump_opt == False:
-            print('Optimal:', obj.x)
+            print('Optimal:', fit.x)
         else:
             return
 
@@ -604,9 +661,8 @@ class FEMSimulation():
             self.lam = params[1]
 
         self.optimization_run()
-        v = self.u.vector() - self.u_experimental[1].vector()
 
-        return v.get_local()
+        return np.concatenate(self.residual_list)
         
 
 

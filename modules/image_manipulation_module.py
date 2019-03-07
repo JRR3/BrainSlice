@@ -72,11 +72,9 @@ class ImageManipulation():
         self.brain_slices_dir = os.path.join(\
                 self.main_dir, self.brain_slices_local_dir)
 
-        self.map_experimental_z_mm_to_model_z_mm =\
-                lambda z_mm: -1.5 - z_mm
+        self.map_experimental_z_mm_to_model_z_mm = None
 
-        self.map_model_z_mm_to_experimental_z_mm =\
-                lambda z_mm: -1.5 - z_mm
+        self.map_model_z_mm_to_experimental_z_mm = None
 
         '''
         XYZ coordinates of the experimental center with
@@ -93,6 +91,7 @@ class ImageManipulation():
         self.n_of_slice_objects        = 0
 #==================================================================M
 
+        self.build_lambda_maps()
         self.load_nib_affine_transformation()
         self.compute_injection_site_properties()
 
@@ -110,6 +109,16 @@ class ImageManipulation():
                 np.concatenate((a,[z_mm])) 
 
 
+#==================================================================
+    def build_lambda_maps(self):
+
+        self.map_experimental_z_mm_to_model_z_mm =\
+                lambda z_mm: -0.825 * z_mm + -4.4
+                #lambda z_mm: -1.5 - z_mm
+
+        self.map_model_z_mm_to_experimental_z_mm =\
+                lambda z_mm: -(z_mm + 4.4)/0.825
+                #lambda z_mm: -1.5 - z_mm
 
 #==================================================================
     def map_experimental_z_n_to_mm(self, z_n):
@@ -858,14 +867,16 @@ class ImageManipulation():
             return
 
 
-        for (dir_path, dir_names, file_names) in os.walk(local_dir):
+        for dir_path, dir_names, file_names in os.walk(local_dir):
 
-            obj = self.create_slice_properties_object(dir_path)
+            SP = self.create_slice_properties_object(dir_path)
 
-            self.slice_properties.append(obj)
+            if SP is None:
+                continue
 
-            self.list_of_experimental_z_mm.append(\
-                    SP.experimental_z_mm)
+            self.slice_properties.append(SP)
+
+            self.list_of_experimental_z_mm.append(SP.experimental_z_mm)
 
 #==================================================================
     def create_slice_properties_object(self, dir_path):
@@ -960,6 +971,7 @@ class ImageManipulation():
         SP.xy_pixel_center = np.loadtxt(center_fname)
 
         return SP
+
 #==================================================================
     def generate_raw_data_essential_information(self):
 
@@ -1006,6 +1018,7 @@ class ImageManipulation():
             print('=========Day', obj.group(0), '=========') 
 
             if injection_sites_fname not in file_names:
+                print('In:', dir_path) 
                 print('Injection sites file missing')
                 return
 
