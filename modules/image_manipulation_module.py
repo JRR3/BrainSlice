@@ -81,6 +81,7 @@ class ImageManipulation():
         respect to the model coordinate system.
         '''
         self.site_of_injection_in_model_mm = None
+        self.site_of_injection_in_experimental_mm = None
 
         self.slice_n_at_injection_site = None
 
@@ -107,6 +108,9 @@ class ImageManipulation():
 
         self.site_of_injection_in_model_mm =\
                 np.concatenate((a,[z_mm])) 
+
+        self.site_of_injection_in_experimental_mm =\
+                np.concatenate((a,[0])) 
 
 
 #==================================================================
@@ -373,13 +377,20 @@ class ImageManipulation():
         forward = self.affine_transformation.dot(v)
         return forward[1]
 
+
+#==================================================================
+    def map_experimental_z_mm_to_model_z_n(self, z_mm):
+
+        v = self.map_experimental_z_mm_to_model_z_mm(z_mm)
+        v = self.map_model_z_mm_to_z_n(v)
+        return np.round(v).astype(int)
+
+
 #==================================================================
     def map_experimental_z_n_to_model_z_n(self, z_n):
 
         v = self.map_experimental_z_n_to_mm(z_n)
-        v = self.map_experimental_z_mm_to_model_z_mm(v)
-        v = self.map_model_z_mm_to_z_n(v)
-        return np.round(v).astype(int)
+        return self.map_experimental_z_mm_to_model_z_n(v)
 
 #==================================================================
     def remove_white_borders(self, img, dir_path):
@@ -475,24 +486,26 @@ class ImageManipulation():
 #==================================================================
     def plot_interpolated_slices(self, local_dir = None):
 
-        #plot_in_3d = True
-        plot_in_3d = False
-        data_is_in_mm = False
+        plot_in_3d = True
+        #plot_in_3d = False
 
         storage_dir = os.path.join(local_dir, 'storage')
         if not os.path.exists(storage_dir):
             os.mkdir(storage_dir)
 
-        #slices_to_plot = np.linspace(400,765,10).astype(int)
+        if plot_in_3d:
+            #slices_to_plot = np.linspace(400,765,10).astype(int)
+            slices_to_plot = np.linspace(-4.,1.,10).astype(int)
+            slices_to_plot =\
+                    self.map_experimental_z_mm_to_model_z_n(slices_to_plot)
+            slices_to_plot = np.unique(slices_to_plot)
 
-        slices_to_plot = np.array([0,1,2,3], dtype = int)
+        else: 
+            slices_to_plot = np.array([0,1,2,3], dtype = int)
+            slices_to_plot =\
+                    self.map_experimental_z_n_to_model_z_n(slices_to_plot)
 
-        slices_to_plot =\
-                self.map_experimental_z_n_to_model_z_n(slices_to_plot)
 
-
-        if data_is_in_mm: 
-            slices_to_plot = self.map_model_z_mm_to_z_n(slices_to_plot)
 
         if plot_in_3d:
             fig = plt.figure()
@@ -505,18 +518,18 @@ class ImageManipulation():
             c_map = lsc.from_list(c_map_name, colors, N = 100)
 
 
-        for slice_idx in slices_to_plot:
+        for slice_counter, slice_idx in enumerate(slices_to_plot):
             print('++++++++++++++++++++++++++++++++++')
             slice_idx_str = str(slice_idx)
             print('Plotting slice:', slice_idx_str)
 
-            slice_z_mm =\
+            slice_z_mm_model =\
                     self.map_model_z_n_to_mm(slice_idx)
             slice_z_mm_exp =\
                     self.map_model_z_mm_to_experimental_z_mm(\
-                    slice_z_mm)
+                    slice_z_mm_model)
 
-            print('Slice z_mm (model): {:0.3f}'.format(slice_z_mm))
+            print('Slice z_mm (model): {:0.3f}'.format(slice_z_mm_model))
             print('Slice z_mm (expr.): {:0.3f}'.\
                     format(slice_z_mm_exp))
 
@@ -537,6 +550,10 @@ class ImageManipulation():
             x = X.ravel()
             y = Y.ravel()
             z = U.ravel()
+
+            fname = 'mesh_coordinates_' + str(slice_counter) + '.txt'
+            fname = os.path.join(storage_dir, fname)
+            np.savetxt(fname, np.array([x,y,z]).T)
 
             u = self.interpolate_intensity(x, y, z)
             Z = u.reshape(X.shape)
@@ -573,6 +590,7 @@ class ImageManipulation():
                         cmap = c_map, vmin=0, vmax=255)
                 fig.colorbar(c, ax=ax)
 
+                ax.set_aspect('equal')
                 fname = 'slice_m_' + slice_idx_str + '.pdf'
                 fname = os.path.join(storage_dir, fname)
                 fig.savefig(fname, dpi = 300)
@@ -583,24 +601,24 @@ class ImageManipulation():
             main_c_map =\
                     color_map.ScalarMappable(\
                     cmap = color_map.jet)
-            a,b,c = self.site_of_injection_in_model_mm
+            a,b,c = self.site_of_injection_in_experimental_mm
             ax.scatter(a,b,c, color='k', marker='o', s = 10)
-            z_bottom = min_z - 0.1
-            z_top    = max_z + 0.1
+            z_bottom = min_z - 0.05
+            z_top    = max_z + 0.05
             ax.plot([a,a],[b,b],\
                     [z_bottom,z_top],\
                     linewidth=2,color='k')
 
+            ax.xaxis.set_ticks([-3,0,3])
             ax.yaxis.set_ticks([-3,0,3])
+            ax.zaxis.set_ticks([-3,-2,-1,0,1])
             ax.set_zlim(z_bottom, z_top)
             ax.set_xlabel('Sagittal')
             ax.set_ylabel('Transverse')
             ax.set_zlabel('Coronal')
 
             fname = 'brain_mesh.pdf'
-            fname = os.path.join(\
-                    self.postprocessing_dir,\
-                    fname)
+            fname = os.path.join(storage_dir, fname)
             fig.savefig(fname, dpi = 300)
             plt.close('all')
 
